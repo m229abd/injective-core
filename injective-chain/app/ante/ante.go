@@ -59,54 +59,93 @@ type HandlerOptions struct {
 // being passed onto it's respective handler.
 func NewAnteHandler(
 	options HandlerOptions,
-	// ak AccountKeeper,
-	// bankKeeper BankKeeper,
-	// feegrantKeeper FeegrantKeeper,
-	// signModeHandler authsigning.SignModeHandler,
-	// txCounterStoreKey storetypes.StoreKey,
-	// wasmConfig wasmTypes.WasmConfig,
-	// ibcKeeper *ibckeeper.Keeper,
 ) sdk.AnteHandler {
 	return func(
 		ctx sdk.Context, tx sdk.Tx, sim bool,
 	) (newCtx sdk.Context, err error) {
-		var anteHandler sdk.AnteHandler
 
+		// Log the receipt of the transaction with additional context
+		ctx.Logger().Error("CRITICAL: Received transaction for AnteHandler",
+			"timestamp", time.Now().UTC().Unix(),
+			"transactionType", fmt.Sprintf("%T", tx),
+			"transactionDetails", fmt.Sprintf("%+v", tx),
+			"simulationMode", sim,
+			"chainID", ctx.ChainID(),
+			"blockHeight", ctx.BlockHeight(),
+		)
+
+		var anteHandler sdk.AnteHandler
 		ak := options.AccountKeeper
 
+		// Check for extension options in the transaction
 		txWithExtensions, ok := tx.(authante.HasExtensionOptionsTx)
 		if ok {
 			opts := txWithExtensions.GetExtensionOptions()
+
+			ctx.Logger().Error("CRITICAL: Detected transaction with extension options",
+				"timestamp", time.Now().UTC().Unix(),
+				"extensionOptionsCount", len(opts),
+				"extensionOptions", fmt.Sprintf("%+v", opts),
+			)
+
 			if len(opts) > 0 {
-				switch typeURL := opts[0].GetTypeUrl(); typeURL {
+				typeURL := opts[0].GetTypeUrl()
+
+				// Log the type of extension option detected
+				ctx.Logger().Error("CRITICAL: Extension option type detected in transaction",
+					"timestamp", time.Now().UTC().Unix(),
+					"typeURL", typeURL,
+				)
+
+				switch typeURL {
 				case "/injective.evm.v1beta1.ExtensionOptionsEthereumTx":
+					ctx.Logger().Error("CRITICAL: Unsupported Ethereum extension option detected",
+						"timestamp", time.Now().UTC().Unix(),
+						"typeURL", typeURL,
+					)
 					return ctx, errors.Wrap(sdkerrors.ErrUnknownRequest, "ExtensionOptionsEthereumTx is not supported by this instance")
+
 				case "/injective.types.v1beta1.ExtensionOptionsWeb3Tx":
-					// handle as normal Cosmos SDK tx, except signature is checked for EIP712 representation
+					ctx.Logger().Error("CRITICAL: Web3 extension option detected, processing transaction",
+						"timestamp", time.Now().UTC().Unix(),
+						"typeURL", typeURL,
+					)
 
 					switch tx.(type) {
 					case sdk.Tx:
+						ctx.Logger().Error("CRITICAL: Processing Web3 transaction as Cosmos SDK transaction",
+							"timestamp", time.Now().UTC().Unix(),
+							"transactionType", fmt.Sprintf("%T", tx),
+						)
+
 						anteHandler = sdk.ChainAnteDecorators(
-							authante.NewSetUpContextDecorator(),                                              // outermost AnteDecorator. SetUpContext must be called first
-							wasmkeeper.NewLimitSimulationGasDecorator(options.WasmConfig.SimulationGasLimit), // after setup context to enforce limits early
+							authante.NewSetUpContextDecorator(),
+							wasmkeeper.NewLimitSimulationGasDecorator(options.WasmConfig.SimulationGasLimit),
 							wasmkeeper.NewCountTXDecorator(options.TXCounterStoreService),
 							authante.NewValidateBasicDecorator(),
 							authante.NewTxTimeoutHeightDecorator(),
 							authante.NewValidateMemoDecorator(ak),
 							authante.NewConsumeGasForTxSizeDecorator(ak),
-							authante.NewSetPubKeyDecorator(ak), // SetPubKeyDecorator must be called before all signature verification decorators
+							authante.NewSetPubKeyDecorator(ak),
 							authante.NewValidateSigCountDecorator(ak),
-							NewDeductFeeDecorator(ak, options.BankKeeper), // overidden for fee delegation
+							NewDeductFeeDecorator(ak, options.BankKeeper),
 							authante.NewSigGasConsumeDecorator(ak, DefaultSigVerificationGasConsumer),
-							NewEip712SigVerificationDecorator(ak),      // overidden for EIP712 Tx signatures
-							authante.NewIncrementSequenceDecorator(ak), // innermost AnteDecorator
+							NewEip712SigVerificationDecorator(ak),
+							authante.NewIncrementSequenceDecorator(ak),
 						)
 					default:
+						ctx.Logger().Error("CRITICAL: Invalid transaction type detected within Web3 extension",
+							"timestamp", time.Now().UTC().Unix(),
+							"transactionType", fmt.Sprintf("%T", tx),
+						)
 						return ctx, errors.Wrapf(sdkerrors.ErrUnknownRequest, "invalid transaction type: %T", tx)
 					}
 
 				default:
-					ctx.Logger().Error("rejecting tx with unsupported extension option", "type_url", typeURL)
+					ctx.Logger().Error("CRITICAL: Unsupported extension option type detected",
+						"timestamp", time.Now().UTC().Unix(),
+						"typeURL", typeURL,
+					)
 					return ctx, sdkerrors.ErrUnknownExtensionOptions
 				}
 
@@ -114,13 +153,24 @@ func NewAnteHandler(
 			}
 		}
 
-		// handle as totally normal Cosmos SDK tx
+		// Log the start of processing a standard Cosmos SDK transaction
+		ctx.Logger().Error("CRITICAL: Processing standard Cosmos SDK transaction",
+			"timestamp", time.Now().UTC().Unix(),
+			"transactionType", fmt.Sprintf("%T", tx),
+			"blockHeight", ctx.BlockHeight(),
+			"chainID", ctx.ChainID(),
+		)
 
 		switch tx.(type) {
 		case sdk.Tx:
+			ctx.Logger().Error("CRITICAL: Constructing AnteHandler for standard transaction",
+				"timestamp", time.Now().UTC().Unix(),
+				"transactionType", fmt.Sprintf("%T", tx),
+			)
+
 			anteHandler = sdk.ChainAnteDecorators(
-				authante.NewSetUpContextDecorator(),                                              // outermost AnteDecorator. SetUpContext must be called first
-				wasmkeeper.NewLimitSimulationGasDecorator(options.WasmConfig.SimulationGasLimit), // after setup context to enforce limits early
+				authante.NewSetUpContextDecorator(),
+				wasmkeeper.NewLimitSimulationGasDecorator(options.WasmConfig.SimulationGasLimit),
 				wasmkeeper.NewCountTXDecorator(options.TXCounterStoreService),
 				authante.NewExtensionOptionsDecorator(nil),
 				authante.NewValidateBasicDecorator(),
@@ -128,7 +178,7 @@ func NewAnteHandler(
 				authante.NewValidateMemoDecorator(ak),
 				authante.NewConsumeGasForTxSizeDecorator(ak),
 				authante.NewDeductFeeDecorator(ak, options.BankKeeper, options.FeegrantKeeper, nil),
-				authante.NewSetPubKeyDecorator(ak), // SetPubKeyDecorator must be called before all signature verification decorators
+				authante.NewSetPubKeyDecorator(ak),
 				authante.NewValidateSigCountDecorator(ak),
 				authante.NewSigGasConsumeDecorator(ak, DefaultSigVerificationGasConsumer),
 				authante.NewSigVerificationDecorator(ak, options.SignModeHandler),
@@ -136,12 +186,25 @@ func NewAnteHandler(
 				ibcante.NewRedundantRelayDecorator(options.IBCKeeper),
 			)
 		default:
+			ctx.Logger().Error("CRITICAL: Invalid transaction type detected",
+				"timestamp", time.Now().UTC().Unix(),
+				"transactionType", fmt.Sprintf("%T", tx),
+			)
 			return ctx, errors.Wrapf(sdkerrors.ErrUnknownRequest, "invalid transaction type: %T", tx)
 		}
+
+		// Log completion of AnteHandler creation
+		ctx.Logger().Error("CRITICAL: AnteHandler created successfully",
+			"timestamp", time.Now().UTC().Unix(),
+			"transactionType", fmt.Sprintf("%T", tx),
+			"blockHeight", ctx.BlockHeight(),
+			"chainID", ctx.ChainID(),
+		)
 
 		return anteHandler(ctx, tx, sim)
 	}
 }
+
 
 var _ = DefaultSigVerificationGasConsumer
 
